@@ -4,7 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -n frontend,backend -c cyan,yellow --kill-others \"vite\" \".venv/bin/python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --reload\"",
+    "dev:frontend": "vite",
+    "dev:backend": ".venv/bin/python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --reload",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview"
@@ -19,6 +21,7 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.1.0",
+    "concurrently": "^10.0.5",
     "oxlint": "^1.79.0",
     "typescript": "~6.0.2",
     "vite": "^8.2.2"

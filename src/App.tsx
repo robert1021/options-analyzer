@@ -49,6 +49,23 @@ type YahooResult = {
 
 const EXAMPLE_TICKERS = ['AAPL','NVDA','TSLA','SPY','QQQ','MSFT','AMD','GOOGL']
 
+const WATCHLIST_KEY = 'chainscope:watchlist'
+const WATCHLIST_MAX = 60
+
+function loadWatchlist(): string[] {
+  try {
+    const raw = localStorage.getItem(WATCHLIST_KEY)
+    if (!raw) return []
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return [...new Set(
+      parsed.map((s) => String(s).trim().toUpperCase()).filter(Boolean),
+    )].slice(0, WATCHLIST_MAX)
+  } catch {
+    return []
+  }
+}
+
 function fmtNum(n?: number) {
   if (n == null || isNaN(n)) return '—'
   if (Math.abs(n) >= 1e9) return (n/1e9).toFixed(2)+'B'
@@ -116,6 +133,41 @@ export default function App() {
   const [strikeFilter, setStrikeFilter] = useState<'all'|'near'>('near')
   const [viewMode, setViewMode] = useState<'both'|'oi'|'vol'>('both')
   const [uaThreshold, setUaThreshold] = useState<'all'|'2x'|'5x'|'10x'>('all')
+  const [watchlist, setWatchlist] = useState<string[]>(loadWatchlist)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+
+  // persist watchlist
+  useEffect(() => {
+    try {
+      localStorage.setItem(WATCHLIST_KEY, JSON.stringify(watchlist))
+    } catch {}
+  }, [watchlist])
+
+  // lock body scroll + close on Escape while the mobile drawer is open
+  useEffect(() => {
+    if (!sidebarOpen) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSidebarOpen(false) }
+    window.addEventListener('keydown', onKey)
+    const mq = window.matchMedia('(max-width: 900px)')
+    const prev = document.body.style.overflow
+    if (mq.matches) document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [sidebarOpen])
+
+  const isWatched = ticker != null && watchlist.includes(ticker)
+
+  const toggleWatch = useCallback((sym: string) => {
+    const s = sym.trim().toUpperCase()
+    if (!s) return
+    setWatchlist((prev) =>
+      prev.includes(s) ? prev.filter((t) => t !== s) : [s, ...prev].slice(0, WATCHLIST_MAX),
+    )
+  }, [])
+
+  const closeSidebar = useCallback(() => setSidebarOpen(false), [])
 
   const doSearch = useCallback(async (sym: string, expiryDate?: number) => {
     const s = sym.trim().toUpperCase()
@@ -137,6 +189,12 @@ export default function App() {
       setLoading(false)
     }
   }, [])
+
+  const selectWatched = useCallback((sym: string) => {
+    setInput(sym)
+    setSidebarOpen(false)
+    doSearch(sym)
+  }, [doSearch])
 
   // on expiry change fetch that chain
   const onExpiryChange = async (ts: number) => {
@@ -314,6 +372,15 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <div className="topbar-inner">
+          <button
+            className="menu-btn"
+            onClick={() => setSidebarOpen((v) => !v)}
+            aria-label={sidebarOpen ? 'Close watchlist menu' : 'Open watchlist menu'}
+            aria-expanded={sidebarOpen}
+            aria-controls="watchlist-sidebar"
+          >
+            <span aria-hidden="true">☰</span>
+          </button>
           <div className="brand">
             <div className="brand-mark">◈</div>
             <div>
@@ -350,7 +417,51 @@ export default function App() {
         </div>
       </header>
 
-      <main className="main">
+      <div className="layout">
+        {sidebarOpen && (
+          <button className="backdrop" onClick={closeSidebar} aria-label="Close watchlist menu" tabIndex={-1} />
+        )}
+        <aside id="watchlist-sidebar" className={`sidebar${sidebarOpen ? ' open' : ''}`} aria-label="Watchlist">
+          <div className="sidebar-head">
+            <h2>Watchlist</h2>
+            <span className="watch-count" aria-label={`${watchlist.length} symbols in watchlist`}>{watchlist.length}</span>
+            <button className="sidebar-close" onClick={closeSidebar} aria-label="Close watchlist">✕</button>
+          </div>
+          {watchlist.length === 0 ? (
+            <div className="sidebar-empty">
+              <p>No tickers yet.</p>
+              <p className="muted">Search a ticker, then hit <strong>☆&nbsp;Watch</strong> to pin it here.</p>
+            </div>
+          ) : (
+            <ul className="watch-list">
+              {watchlist.map((sym) => (
+                <li key={sym} className={sym === ticker ? 'active' : ''}>
+                  <button
+                    className="watch-item"
+                    onClick={() => selectWatched(sym)}
+                    aria-label={`Analyze ${sym}`}
+                    aria-current={sym === ticker ? 'true' : undefined}
+                  >
+                    <span className="watch-sym">{sym}</span>
+                    {sym === ticker && <span className="watch-now">now</span>}
+                    <span className="watch-go" aria-hidden="true">›</span>
+                  </button>
+                  <button
+                    className="watch-remove"
+                    onClick={() => toggleWatch(sym)}
+                    aria-label={`Remove ${sym} from watchlist`}
+                    title={`Remove ${sym}`}
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="sidebar-foot muted">Saved in this browser · click a ticker to analyze it</div>
+        </aside>
+
+        <main className="main">
         {error && (
           <div className="alert error">
             <strong>Couldn’t load:</strong> {error}
@@ -372,6 +483,17 @@ export default function App() {
                 <div className="quote-sym">
                   <h1>{quote.symbol}</h1>
                   <span className="quote-name">{quote.longName || quote.shortName || ''}</span>
+                  {ticker && (
+                    <button
+                      className={`watch-btn${isWatched ? ' on' : ''}`}
+                      onClick={() => toggleWatch(ticker)}
+                      aria-pressed={isWatched}
+                      aria-label={isWatched ? `Remove ${ticker} from watchlist` : `Add ${ticker} to watchlist`}
+                      title={isWatched ? 'Remove from watchlist' : 'Add to watchlist'}
+                    >
+                      {isWatched ? '★ Watching' : '☆ Watch'}
+                    </button>
+                  )}
                 </div>
                 <div className="quote-price">
                   <span className="price">{quote.regularMarketPrice != null ? fmtPrice(quote.regularMarketPrice) : '—'} <em>{quote.currency || ''}</em></span>
@@ -658,7 +780,8 @@ export default function App() {
           <span>Data: Yahoo Finance via Python yfinance — no API key required. Backend: FastAPI + yfinance.</span>
           <span>Built for analysis, not advice. Quotes are delayed.</span>
         </footer>
-      </main>
+        </main>
+      </div>
     </div>
   )
 }
